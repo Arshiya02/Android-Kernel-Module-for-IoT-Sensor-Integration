@@ -1,0 +1,100 @@
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/fs.h>
+#include <linux/device.h>
+#include <linux/uaccess.h>
+#include <linux/net.h>
+#include <linux/in.h>
+#include <linux/udp.h>
+#include <linux/power_supply.h>  // For power management
+
+#define DEVICE_NAME "iot_sensor"
+#define CLASS_NAME "iot"
+#define UDP_PORT 12345
+
+static int majorNumber;
+static struct class* iotClass = NULL;
+static struct device* iotDevice = NULL;
+static char sensor_data[256] = {0};
+static size_t data_len = 0;
+
+// File operations for user-space interaction
+static int dev_open(struct inode *inodep, struct file *filep) {
+    printk(KERN_INFO "IoT Sensor: Device opened\n");
+    return 0;
+}
+
+static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
+    int error_count = 0;
+    error_count = copy_to_user(buffer, sensor_data, data_len);
+    if (error_count == 0) {
+        printk(KERN_INFO "IoT Sensor: Sent %zu chars to user\n", data_len);
+        return (data_len = 0);  // Clear buffer after read
+    }
+    return -EFAULT;
+}
+
+static int dev_release(struct inode *inodep, struct file *filep) {
+    printk(KERN_INFO "IoT Sensor: Device closed\n");
+    return 0;
+}
+
+static struct file_operations fops = {
+    .open = dev_open,
+    .read = dev_read,
+    .release = dev_release,
+};
+
+// Simulate UDP data reception for sensor
+static void receive_sensor_data(void) {
+    // Placeholder for UDP socket setup (in kernel space, use kernel sockets)
+    strcpy(sensor_data, "Temperature: 25C Humidity: 60%");
+    data_len = strlen(sensor_data);
+    printk(KERN_INFO "IoT Sensor: Received data via UDP: %s\n", sensor_data);
+}
+
+// Power management callback
+static int power_notify(struct notifier_block *nb, unsigned long event, void *ignored) {
+    if (event == PSY_EVENT_PROP_CHANGED) {
+        printk(KERN_INFO "IoT Sensor: Power event detected, optimizing...\n");
+    }
+    return NOTIFY_DONE;
+}
+
+static struct notifier_block power_nb = {
+    .notifier_call = power_notify,
+};
+
+static int __init sensor_init(void) {
+    printk(KERN_INFO "Initializing IoT Sensor Module\n");
+    majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
+    if (majorNumber < 0) return majorNumber;
+
+    iotClass = class_create(THIS_MODULE, CLASS_NAME);
+    iotDevice = device_create(iotClass, NULL, MKDEV(majorNumber, 0), NULL, DEVICE_NAME);
+
+    // Register for power events
+    power_supply_reg_notifier(&power_nb);
+
+    // Simulate initial data acquisition
+    receive_sensor_data();
+
+    return 0;
+}
+
+static void __exit sensor_exit(void) {
+    device_destroy(iotClass, MKDEV(majorNumber, 0));
+    class_unregister(iotClass);
+    class_destroy(iotClass);
+    unregister_chrdev(majorNumber, DEVICE_NAME);
+    power_supply_unreg_notifier(&power_nb);
+    printk(KERN_INFO "IoT Sensor Module unloaded\n");
+}
+
+module_init(sensor_init);
+module_exit(sensor_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Shaik Arshiya Anjum");
+MODULE_DESCRIPTION("Kernel module for IoT sensor integration");
